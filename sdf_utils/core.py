@@ -161,7 +161,7 @@ def tube_sdf(curve_obj, query_points, radius_func, start_radius, end_radius):
     # If all are negative, the point is inside.
 
     # Combined SDF for the watertight tube
-    sdf_combined = np.maximum(sdf_body, np.maximum(sdf_cap_start, sdf_cap_end))
+    sdf_combined = intersect_sdf([sdf_body, sdf_cap_start, sdf_cap_end])
 
     return sdf_combined
 
