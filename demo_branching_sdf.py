@@ -1,29 +1,29 @@
 import time
 import numpy as np
 from geomdl import NURBS
-from CurveSDF import *
+from sdf_utils import generate_grid_points, curve_sdf, union_sdf
 
 
 def create_branch_curve(trunk_curve, branch_point_param, branch_direction, branch_length):
     """
     Create a branch curve that starts at a point on the trunk curve.
-    
+
     Parameters:
         trunk_curve: geomdl.NURBS.Curve - The parent curve
         branch_point_param: float - Parameter value on trunk where branch connects
         branch_direction: numpy array - Direction vector for the branch
         branch_length: float - Length of the branch curve
-        
+
     Returns:
         geomdl.NURBS.Curve - The branch curve
     """
     # Evaluate trunk at branch point
     point = np.array(trunk_curve.evaluate_single(branch_point_param))
-    
+
     # Normalize direction vector
     direction = np.array(branch_direction)
     direction = direction / np.linalg.norm(direction)
-    
+
     # Create perpendicular vectors for more interesting curve shapes
     # Find two vectors perpendicular to the direction vector
     if abs(direction[0]) < abs(direction[1]) and abs(direction[0]) < abs(direction[2]):
@@ -32,20 +32,20 @@ def create_branch_curve(trunk_curve, branch_point_param, branch_direction, branc
         perp1 = np.array([-direction[2], 0, direction[0]])
     else:
         perp1 = np.array([-direction[1], direction[0], 0])
-    
+
     perp1 = perp1 / np.linalg.norm(perp1)
     perp2 = np.cross(direction, perp1)
     perp2 = perp2 / np.linalg.norm(perp2)
-    
+
     # Create branch curve
     branch = NURBS.Curve()
     branch.degree = 3
-    
+
     # Create 5 control points for the branch (cubic curve)
     # First control point is at the branch connection
     # Use perpendicular vectors to create curved shape
     factor = branch_length * 0.25  # Scale factor for control point displacement
-    
+
     ctrlpts = [
         point.tolist(),
         (point + 0.2 * branch_length * direction + factor * perp1).tolist(),
@@ -53,15 +53,15 @@ def create_branch_curve(trunk_curve, branch_point_param, branch_direction, branc
         (point + 0.8 * branch_length * direction - factor * perp1).tolist(),
         (point + branch_length * direction).tolist()
     ]
-    
+
     branch.ctrlpts = ctrlpts
     branch.weights = [1.0, 1.0, 1.0, 1.0, 1.0]  # Equal weights
-    
+
     # Clamped knot vector for cubic curve with 5 control points
     branch.knotvector = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]
     branch.delta = 0.001  # Set evaluation delta
     branch.evaluate()
-    
+
     return branch
 
 def plot(sdf, curves, bounds, resolution, X, Y, Z):
@@ -74,7 +74,7 @@ def plot(sdf, curves, bounds, resolution, X, Y, Z):
         resolution (int): Grid resolution for SDF calculation
     """
     import plotly.graph_objects as go
-    
+
     # Reshape distances back to grid
     SDF = sdf.reshape((resolution, resolution, resolution))
 
@@ -91,7 +91,7 @@ def plot(sdf, curves, bounds, resolution, X, Y, Z):
             name='NURBS Curve'
         )
         data.append(curve_trace)
-    
+
     iso_surface_trace = go.Isosurface(
         x=X.flatten(),
         y=Y.flatten(),
@@ -109,7 +109,7 @@ def plot(sdf, curves, bounds, resolution, X, Y, Z):
     )
     data.append(iso_surface_trace)
     fig = go.Figure(data=data)
-    
+
     # volume_trace = go.Volume(
     #     x=X.flatten(),
     #     y=Y.flatten(),
@@ -123,7 +123,7 @@ def plot(sdf, curves, bounds, resolution, X, Y, Z):
     # )
 
     # fig = go.Figure(data=[curve_trace, volume_trace])
-    
+
     fig.update_layout(
         title='Interactive 3D Signed Distance Field (SDF) of NURBS Curve',
         scene=dict(
@@ -143,7 +143,7 @@ def plot(sdf, curves, bounds, resolution, X, Y, Z):
 
 
 if __name__ == '__main__':
-    
+
     # --- Create trunk NURBS curve ---
     trunk = NURBS.Curve()
     trunk.degree = 3
@@ -152,40 +152,40 @@ if __name__ == '__main__':
     trunk.knotvector = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]
     trunk.delta = 0.001  # Set the delta for evaluation
     trunk.evaluate()
-    
+
     # Generate grid points
     bounds = (-1, 1, -1, 1, -1, 1)
     resolution = 128
     points, (X, Y, Z) = generate_grid_points(bounds, resolution)
-    
+
     # --- Create two branch curves ---
     # Branch point is at parameter 0.5 (middle of the trunk)
     branch_point_param_1 = 0.5
     branch_point_param_2 = 0.5
-    
+
     # First branch going upward
-    branch1 = create_branch_curve(trunk, 
-                                 branch_point_param_1, 
-                                 branch_direction=[0, 1, 0.8], 
+    branch1 = create_branch_curve(trunk,
+                                 branch_point_param_1,
+                                 branch_direction=[0, 1, 0.8],
                                  branch_length=0.5)
-    
+
     # Second branch going downward
-    branch2 = create_branch_curve(trunk, 
-                                 branch_point_param_2, 
-                                 branch_direction=[0, -0.5, 1], 
+    branch2 = create_branch_curve(trunk,
+                                 branch_point_param_2,
+                                 branch_direction=[0, -0.5, 1],
                                  branch_length=0.7)
-    
+
     curves = [trunk, branch1, branch2]
-        
+
     # Calculate SDFs
-    trunk_sdf = curve_sdf(trunk, points)
-    branch1_sdf = curve_sdf(branch1, points)
-    branch2_sdf = curve_sdf(branch2, points)
+    trunk_sdf, _ = curve_sdf(trunk, points)
+    branch1_sdf, _ = curve_sdf(branch1, points)
+    branch2_sdf, _ = curve_sdf(branch2, points)
     sdfs = [trunk_sdf, branch1_sdf, branch2_sdf]
 
     # Perform union operation on all SDFs
     combined_sdf = union_sdf(sdfs)
-    
+
     # Plot the combined SDF
     start_time = time.time()
     sdf = plot(combined_sdf, curves, bounds, resolution, X, Y, Z)
