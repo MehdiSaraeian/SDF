@@ -1,8 +1,8 @@
-import time
+import time, math
 import numpy as np
 import plotly.graph_objects as go
 from geomdl import NURBS
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree # type: ignore
 
 
 def generate_grid_points(bounds, resolution):
@@ -21,7 +21,66 @@ def generate_grid_points(bounds, resolution):
     points = np.ascontiguousarray(np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1))
     return points, (X, Y, Z)
 
-def compute_point_distance(curve_obj, points):
+def union_sdf(sdfs):
+    """
+    Perform union operation on multiple SDFs.
+    
+    Parameters:
+        sdfs: List of numpy arrays containing SDF values
+    
+    Returns:
+        combined_sdf: Numpy array with unified SDF values
+    """
+    if not sdfs:
+        return None
+    
+    # Start with first SDF
+    combined_sdf = sdfs[0].copy()
+    
+    # Combine with remaining SDFs
+    for i in range(1, len(sdfs)):
+        combined_sdf = np.minimum(combined_sdf, sdfs[i])
+    
+    return combined_sdf
+
+def subtract_sdf(sdfs):
+    """
+    Perform subtraction (difference) operation on multiple SDFs.
+    The first SDF is the base; subsequent SDFs are subtracted from it.
+    
+    Parameters:
+        sdfs: List of numpy arrays containing SDF values
+    
+    Returns:
+        result_sdf: Numpy array with subtracted SDF values
+    """
+    if not sdfs:
+        return None
+    result_sdf = sdfs[0].copy()
+    for sdf in sdfs[1:]:
+        result_sdf = np.maximum(result_sdf, -sdf) # Corrected subtraction operation
+    return result_sdf
+
+def intersect_sdf(sdfs):
+    """
+    Perform intersection operation on multiple SDFs.
+    This computes the SDF of the intersection by taking the maximum
+    among the provided SDF values.
+
+    Parameters:
+        sdfs: List of numpy arrays containing SDF values
+
+    Returns:
+        result_sdf: Numpy array representing the intersection SDF.
+    """
+    if not sdfs:
+        return None
+    result_sdf = sdfs[0].copy()
+    for sdf in sdfs[1:]:
+        result_sdf = np.maximum(result_sdf, sdf)
+    return result_sdf
+
+def curve_sdf(curve_obj, points):
     """
     Compute the distance from specific points to the nearest point on the NURBS curve.
 
@@ -49,7 +108,7 @@ def compute_point_distance(curve_obj, points):
     # Return scalar if single point, array otherwise
     return float(distances[0]) if len(points) == 1 else distances
 
-def plot_curve_sdf(curve_obj, bounds, resolution=50):
+def plot_curve_sdf(sdf, curves, bounds, resolution, X, Y, Z):
     """
     Plot the signed distance field of a curve (3D).
 
@@ -57,34 +116,24 @@ def plot_curve_sdf(curve_obj, bounds, resolution=50):
         curve_obj: geomdl.NURBS.Curve()
         bounds (tuple): Plot bounds for the SDF grid (x_min, x_max, y_min, y_max, z_min, z_max)
         resolution (int): Grid resolution for SDF calculation
-        num_processes (int, optional): Number of processes for parallel computation
     """
-    # Generate grid points efficiently
-    points, (X, Y, Z) = generate_grid_points(bounds, resolution)
     
-    # Build KDTree once for all points with optimized leaf_size
-    curve_points = np.array(curve_obj.evalpts, dtype=float)
-    leaf_size = min(20, len(curve_points) // 2)  # Optimize leaf_size based on point count
-    kdtree = cKDTree(curve_points, leafsize=leaf_size)
-    
-    print(f"Calculating SDF on a {resolution}x{resolution}x{resolution} grid...")
-    
-    # For this problem size, sequential execution with threaded KDTree is fastest
-    distances, _ = kdtree.query(points, workers=-1)
-
     # Reshape distances back to grid
-    SDF = distances.reshape((resolution, resolution, resolution))
-    print("SDF calculation complete.")
+    SDF = sdf.reshape((resolution, resolution, resolution))
 
     # Plot results
-    curve_trace = go.Scatter3d(
-        x=curve_points[:, 0],
-        y=curve_points[:, 1],
-        z=curve_points[:, 2],
-        mode='lines',
-        line=dict(color='blue', width=5),
-        name='NURBS Curve'
-    )
+    data =[]
+    for curve in curves:
+        curve_points = np.array(curve.evalpts, dtype=float)
+        curve_trace = go.Scatter3d(
+            x=curve_points[:, 0],
+            y=curve_points[:, 1],
+            z=curve_points[:, 2],
+            mode='lines',
+            line=dict(color='blue', width=5),
+            name='NURBS Curve'
+        )
+        data.append(curve_trace)
     
     # iso_surface_trace = go.Isosurface(
     #     x=X.flatten(),
@@ -93,16 +142,16 @@ def plot_curve_sdf(curve_obj, bounds, resolution=50):
     #     value=SDF.flatten(),
     #     isomin=0.01,
     #     # isomax=SDF.max(),
-    #     isomax=0.1,
-    #     opacity=0.4,
+    #     isomax=0.15,
+    #     opacity=0.5,
     #     surface_count=5,
     #     caps=dict(x_show=False, y_show=False, z_show=False),
     #     colorscale='viridis',
     #     colorbar=dict(title='Distance'),
     #     name='SDF Isosurfaces'
     # )
-
-    # fig = go.Figure(data=[curve_trace, iso_surface_trace])
+    # data.append(iso_surface_trace)
+    # fig = go.Figure(data=data)
     
     volume_trace = go.Volume(
         x=X.flatten(),
@@ -115,8 +164,8 @@ def plot_curve_sdf(curve_obj, bounds, resolution=50):
         colorbar=dict(title='Distance'),
         name='SDF Volume'
     )
-
-    fig = go.Figure(data=[curve_trace, volume_trace])
+    data.append(volume_trace)
+    fig = go.Figure(data=data)
     
     fig.update_layout(
         title='Interactive 3D Signed Distance Field (SDF) of NURBS Curve',
@@ -133,55 +182,133 @@ def plot_curve_sdf(curve_obj, bounds, resolution=50):
     )
     print("Displaying interactive plot...")
     fig.show()
-    return SDF
+    return None
 
-def demo_point_distance():
+def plot_surf_sdf(sdf, bounds, resolution, X, Y, Z):
     """
-    Demonstrate the point distance calculation with a simple example.
+    Plot the signed distance field of a curve (3D).
+
+    Parameters:
+        curve_obj: geomdl.NURBS.Curve()
+        bounds (tuple): Plot bounds for the SDF grid (x_min, x_max, y_min, y_max, z_min, z_max)
+        resolution (int): Grid resolution for SDF calculation
     """
-    # Create a simple NURBS curve
+    
+    # Reshape distances back to grid
+    SDF = sdf.reshape((resolution, resolution, resolution))
+
+    # Plot results
+    data =[]
+
+    iso_surface_trace = go.Isosurface(
+        x=X.flatten(),
+        y=Y.flatten(),
+        z=Z.flatten(),
+        value=SDF.flatten(),
+        isomin=0.0,
+        # isomax=SDF.max(),
+        isomax=0.1,
+        opacity=0.1,
+        surface_count=3,
+        caps=dict(x_show=False, y_show=False, z_show=False),
+        colorscale='viridis',
+        colorbar=dict(title='Distance'),
+        name='SDF Isosurfaces'
+    )
+    data.append(iso_surface_trace)
+    fig = go.Figure(data=data)
+    
+    # volume_trace = go.Volume(
+    #     x=X.flatten(),
+    #     y=Y.flatten(),
+    #     z=Z.flatten(),
+    #     value=SDF.flatten(),
+    #     opacity=0.1,
+    #     surface_count=20,
+    #     colorscale='Viridis',
+    #     colorbar=dict(title='Distance'),
+    #     name='SDF Volume'
+    # )
+    # data.append(volume_trace)
+    # fig = go.Figure(data=data)
+    
+    fig.update_layout(
+        title='Interactive 3D Signed Distance Field (SDF) of NURBS Curve',
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            xaxis=dict(range=[bounds[0], bounds[1]], autorange=False),
+            yaxis=dict(range=[bounds[2], bounds[3]], autorange=False),
+            zaxis=dict(range=[bounds[4], bounds[5]], autorange=False),
+            aspectratio=dict(x=1, y=1, z=1)
+        ),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+    print("Displaying interactive plot...")
+    fig.show()
+    return None
+
+def main():
+    # --- NURBS Curve Definition using geomdl ---
     curve = NURBS.Curve()
     curve.degree = 3
     curve.ctrlpts = [(-1, -1, -1), (0, -1, 0), (0, 1, 0), (1, 1, 1)]
     curve.weights = [1, 10, 10, 1]
     curve.knotvector = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
-    curve.delta = 0.001
-    curve.evaluate()
-
-    # Test points
-    test_points = np.array([
-        [0, 0, 0],      # Point near the curve
-        [2, 2, 2],      # Point far from the curve
-        [-1, -1, -1],   # Point at curve endpoint
-    ])
-
-    # Calculate and display distances
-    distances = compute_point_distance(curve, test_points)
+    curve.delta = 0.001 # Set the delta for evaluation
+    curve.evaluate()    # Precompute evaluation points
     
-    print("\nPoint Distance Demo:")
-    for point, dist in zip(test_points, distances):
-        print(f"Distance from point {point} to curve: {dist:.4f}")
-    return test_points, distances
-
-if __name__ == '__main__':
-    # --- NURBS Curve Definition using geomdl ---
-    degree = 3
-    ctrlpts = [(-1, -1, -1), (0, -1, 0), (0, 1, 0), (1, 1, 1)]
-    weights = [1, 10, 10, 1]
-    knotvector = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
-
-    curve = NURBS.Curve()
-    curve.degree = degree
-    curve.ctrlpts = ctrlpts
-    curve.weights = weights
-    curve.knotvector = knotvector
-    curve.delta = 0.001  # Set the delta for evaluation
-    curve.evaluate()   # Precompute evaluation points
-
-    bounds = (-1.5, 1.5, -1.5, 1.5, -1.5, 1.5)  # Define bounds for the plot
+    trunk = NURBS.Curve()
+    trunk.degree = 3
+    trunk.ctrlpts = [(-0.5, 0.25, -0.5), (0, 0, -0.5), (0, 0, 0), (0, 0, 0.5), (0.5, 0.25, 0.5)]
+    trunk.weights = [1.0, 2.0, 2.0, 2.0, 1.0]
+    trunk.knotvector = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]
+    trunk.delta = 0.001
+    trunk.evaluate()
+    
+    curves=[curve, trunk]
+    
+    # ctrlpts = [
+    # [[1.0, 0.0, 0.0, 1.0], [0.7071, 0.7071, 0.0, 0.7071], [0.0, 1.0, 0.0, 1.0], [-0.7071, 0.7071, 0.0, 0.7071], [-1.0, 0.0, 0.0, 1.0], [-0.7071, -0.7071, 0.0, 0.7071], [0.0, -1.0, 0.0, 1.0], [0.7071, -0.7071, 0.0, 0.7071], [1.0, 0.0, 0.0, 1.0]],
+    # [[1.0, 0.0, 1.0, 1.0], [0.7071, 0.7071, 0.7071, 0.7071], [0.0, 1.0, 1.0, 1.0], [-0.7071, 0.7071, 0.7071, 0.7071], [-1.0, 0.0, 1.0, 1.0], [-0.7071, -0.7071, 0.7071, 0.7071], [0.0, -1.0, 1.0, 1.0], [0.7071, -0.7071, 0.7071, 0.7071], [1.0, 0.0, 1.0, 1.0]]
+    # ]
+    # # --- Create a NURBS surface ---
+    # surf = NURBS.Surface()
+    # surf.degree_u = 1
+    # surf.degree_v = 2
+    # surf.ctrlpts2d = ctrlpts
+    # surf.knotvector_u = [0, 0, 1, 1]
+    # surf.knotvector_v = [0, 0, 0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1, 1, 1]
+    # surf.delta = 0.005
+    # surf.evaluate()
+    
+    # Generate grid points
+    bounds = (-1.5, 1.5, -1.5, 1.5, -1.5, 1.5)  # Define bounds for the grid
+    resolution = 64  # Define resolution for the grid
+    points, (X, Y, Z) = generate_grid_points(bounds, resolution)
+    
+    # start_time = time.time()
+    # SDF = curve_sdf(surf, points)
+    # plot_surf_sdf(SDF, bounds, resolution)
+    # end_time = time.time()
+    # print(f"Total computation time: {end_time - start_time:.2f} seconds")
     
     start_time = time.time()
-    # plot_curve_sdf(curve, bounds, resolution=50)
-    demo_point_distance()
+    SDF1 = curve_sdf(curve, points)
+    SDF2 = curve_sdf(trunk, points)
+    U_SDF = union_sdf([SDF1, SDF2])  # Combine SDFs using union operation
+    S_SDF = subtract_sdf([SDF1, SDF2])  # Combine SDFs using subtraction operation
+    I_SDF = intersect_sdf([SDF1, SDF2])  # Combine SDFs using intersection operation
+    plot_curve_sdf(U_SDF, curves, bounds, resolution, X, Y, Z)
+    print("S_SDF:", U_SDF)
     end_time = time.time()
     print(f"Total computation time: {end_time - start_time:.2f} seconds")
+    
+    # --- Example usage of curve_sdf to compute the distance of a point to the curve ---
+    point = [-1,-1,-1]
+    dist = curve_sdf(curve, point)
+    print(f"Distance from point {point} to curve: {dist:.4f}")
+
+if __name__ == '__main__':
+    main()
