@@ -4,6 +4,7 @@ from geomdl import NURBS
 from sdf_utils import generate_grid_points, tube_sdf, radius_function, plot_curve_sdf, union_sdf
 
 
+
 def create_branch_curve(trunk_curve, branch_point_param, branch_direction, branch_length):
     """
     Create a branch curve that starts at a point on the trunk curve.
@@ -77,7 +78,9 @@ if __name__ == '__main__':
     trunk.evaluate()
 
     # Generate grid points
+
     bounds = (-1.5, 1.5, -1.5, 1.5, -1.5, 1.5)
+
     resolution = 128
     points, (X, Y, Z) = generate_grid_points(bounds, resolution)
 
@@ -87,19 +90,19 @@ if __name__ == '__main__':
     branch_point_param_2 = 0.5
 
     # First branch going upward
-    branch1 = create_branch_curve(trunk,
-                                 branch_point_param_1,
-                                 branch_direction=[0, 1, 0.8],
+    branch1 = create_branch_curve(trunk, 
+                                 branch_point_param_1, 
+                                 branch_direction=[0, 1, 0.8], 
                                  branch_length=0.8)
-
+    
     # Second branch going downward
-    branch2 = create_branch_curve(trunk,
-                                 branch_point_param_2,
-                                 branch_direction=[0, -0.5, 1],
+    branch2 = create_branch_curve(trunk, 
+                                 branch_point_param_2, 
+                                 branch_direction=[0, -0.5, 1], 
                                  branch_length=0.9)
-
+    
     curves = [trunk, branch1, branch2]
-
+        
     # --- Calculate Tube SDFs ---
     # Define radii for the tubes
     trunk_start_radius = 0.2
@@ -111,12 +114,12 @@ if __name__ == '__main__':
     trunk_sdf = tube_sdf(trunk, points, radius_function, trunk_start_radius, trunk_end_radius)
     branch1_sdf = tube_sdf(branch1, points, radius_function, branch_start_radius, branch_end_radius)
     branch2_sdf = tube_sdf(branch2, points, radius_function, branch_start_radius, branch_end_radius)
-
+    
     sdfs = [trunk_sdf, branch1_sdf, branch2_sdf]
 
     # Perform union operation on all SDFs
     combined_sdf = union_sdf(sdfs)
-
+    
     # Plot the combined SDF
     start_time = time.time()
     plot_curve_sdf(combined_sdf, curves, bounds, resolution, X, Y, Z)
